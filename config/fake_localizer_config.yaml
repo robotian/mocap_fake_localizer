@@ -1,0 +1,22 @@
+/**/mocap_fake_localizer_node:
+  ros__parameters:
+    # mode options:
+    # 1: Use the local EKF (or odometry estimator) and a localizer (e.g., SLAM)
+    # 2: Use the Mocap data for the odometry, and use a localizer
+    # 3: Use the local EKF (or odometry estimator), and use the Mocap data as a localizer
+    # 4: Use the Mocap data for the odometry and localization (For the Ground Truth based navigation)
+
+    mode: 3 
+
+    # 1. TF frame names
+    mocap_odom_topic: "ground_truth/odom"  # The topic where the mocap odometry is published
+    odom_topic: "platform/odom_filtered"  # The topic where the fake odometry will be published
+    
+    ref_frame: "base_mocap"  # The reference frame for the transform (e.g., "base_mocap")
+    ground_truth_frame: "base_footprint"  # The frame of the mocap odometry (e.g., "ground_truth")
+    map_frame: "map"  # The frame of the mocap odometry (e.g., "ground_truth")
+    odom_frame: "odom"  # The frame of the mocap odometry (e.g., "ground_truth")
+    base_link_frame: "base_link"  # The frame of the mocap odometry (e.g., "ground_truth")
+    
+    map_pose_wrt_ref: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]  # Pose of the map frame with respect to the reference frame (x, y, z, x, y, z, w)
+      
