@@ -1,5 +1,6 @@
 #include <memory>
 #include <string>
+#include <chrono>
 
 #include "rclcpp/rclcpp.hpp"
 #include "nav_msgs/msg/odometry.hpp"
@@ -13,6 +14,7 @@
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
 
+using namespace std::chrono_literals;
 
 class MocapFakeLocalizer : public rclcpp::Node {
 public:
@@ -113,9 +115,11 @@ public:
         map_frame_ = this->get_parameter("map_frame").as_string();
         odom_frame_ = this->get_parameter("odom_frame").as_string();
         base_link_frame_ = this->get_parameter("base_link_frame").as_string();
-        std::string gt_topic_name = this->get_parameter("mocap_odom_topic").as_string();
+        gt_topic_name_ = this->get_parameter("mocap_odom_topic").as_string();
         std::string odom_topic_name = this->get_parameter("odom_topic").as_string();
         
+        // Timer to check for TF and publish at 10Hz
+        timer_ = this->create_wall_timer(1000ms, std::bind(&MocapFakeLocalizer::on_timer, this));
 
         if(mode_ < 1 || mode_ > 4) {
             RCLCPP_ERROR(this->get_logger(), "Invalid mode parameter. Must be between 1 and 4.");
@@ -132,7 +136,7 @@ public:
                 RCLCPP_INFO(this->get_logger(), "Mode 2: Use the Mocap data only for the odometry, and use a localizer.");
                 this->setTransMatRef2Odom();
                 gt_odom_subscription_ = this->create_subscription<nav_msgs::msg::Odometry>(
-                    gt_topic_name, 10, std::bind(&MocapFakeLocalizer::groundtruth_odom_callback, this, std::placeholders::_1));
+                    gt_topic_name_, 10, std::bind(&MocapFakeLocalizer::groundtruth_odom_callback, this, std::placeholders::_1));
 
                 break;
             case 3:
@@ -143,26 +147,32 @@ public:
             case 4:
                 RCLCPP_INFO(this->get_logger(), "Mode 4: Use the Mocap data for the odometry and localization (For the Ground Truth based navigation).");
                 this->ref2map_tf_broadcast(); // set the static transform from the reference frame to the map frame based on the provided parameters
-                // this->setTransMatRef2Odom(); // set the homogeneous transformation matrix from the reference frame to the odom frame based on the current ground truth pose
 
                 gt_odom_subscription_ = this->create_subscription<nav_msgs::msg::Odometry>(
-                    gt_topic_name, 10, std::bind(&MocapFakeLocalizer::groundtruth_odom_mode4_callback, this, std::placeholders::_1));
+                    gt_topic_name_, 10, std::bind(&MocapFakeLocalizer::groundtruth_odom_mode4_callback, this, std::placeholders::_1));
 
                 break;
         }
 
-        // 4. Subscribe to the Mocap Odometry
-        // subscription_ = this->create_subscription<nav_msgs::msg::Odometry>(
-        //     topic_name, 10, std::bind(&MocapFakeLocalizer::groundtruth_odom_callback, this, std::placeholders::_1));
-
-        
         // odom_subscription_ = this->create_subscription<nav_msgs::msg::Odometry>(
         //     odom_topic_name, 10, std::bind(&MocapFakeLocalizer::odom_callback, this, std::placeholders::_1));
 
-        // RCLCPP_INFO(this->get_logger(), "Waiting for first mocap and odom messages on: %s and %s", topic_name.c_str(), odom_topic_name.c_str());
     }
 
 private:
+
+    void on_timer() {
+        size_t gt_odom_pub_count = this->count_publishers(gt_topic_name_); // gt_odom_subscription_ ? gt_odom_subscription_->get_publisher_count() : 0;
+        if(gt_odom_pub_count == 0) {
+            RCLCPP_WARN(this->get_logger(), "No publishers for ground truth odometry topic. Please check if the Mocap system is publishing to the correct topic.");
+        }else{
+            RCLCPP_INFO(this->get_logger(), "Ground truth odometry topic has %zu publishers.", gt_odom_pub_count);
+            timer_->cancel(); // Stop the timer once we have confirmed that the Mocap data is being published
+            return;
+        }
+    }
+
+
     void groundtruth_odom_mode4_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
         if(!transMat_ref2odom_set_){
             RCLCPP_WARN(this->get_logger(), "Reference to odom transform not set yet. Ignoring ground truth odometry data.");
@@ -331,7 +341,10 @@ private:
         t.transform.rotation.y = map_pose_wrt_ref_[4];
         t.transform.rotation.z = map_pose_wrt_ref_[5];
         t.transform.rotation.w = map_pose_wrt_ref_[6];
-        
+
+        T_ref_to_map_static_ = transformToMatrix(t.transform.translation, t.transform.rotation);
+        transMat_ref2map_static_set_ = true;
+
         tf_static_broadcaster_->sendTransform(t);
         
         RCLCPP_INFO(this->get_logger(), "Static transform %s -> %s broadcasted.", ref_frame_.c_str(), map_frame_.c_str());
@@ -506,12 +519,16 @@ private:
     bool initialized_ = false;
     bool transMat_ref2odom_set_ = false;
     bool transMat_map2odom_set_ = false;
+    bool transMat_ref2map_static_set_ = false;
     std::string ref_frame_;
     // std::string child_frame_;
     std::string gt_child_frame_;
     std::string map_frame_;
     std::string odom_frame_;
     std::string base_link_frame_;
+    std::string gt_topic_name_;
+
+
     int mode_;
     std::vector<double> map_pose_wrt_ref_;
 
@@ -523,6 +540,7 @@ private:
 
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr gt_odom_subscription_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscription_;    
+    rclcpp::TimerBase::SharedPtr timer_;
     geometry_msgs::msg::Transform ref_to_child_transform_;
 
     Eigen::Matrix4d T_mocap_to_footprint_; 
@@ -530,6 +548,7 @@ private:
     Eigen::Matrix4d T_odom_to_baselink_; 
     Eigen::Matrix4d T_ref_to_odom_; 
     Eigen::Matrix4d T_ref_to_map_;
+    Eigen::Matrix4d T_ref_to_map_static_;
 };
 
 int main(int argc, char * argv[]) {
