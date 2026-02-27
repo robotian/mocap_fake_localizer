@@ -139,15 +139,14 @@ public:
                 RCLCPP_INFO(this->get_logger(), "Mode 3: Use the local EKF (or odometry estimator), and use the Mocap data as a localizer.");
                 this->ref2map_tf_broadcast();
                 this->map2odom_tf_broadcast(true);
-                // set the odom frame
-                
-                // odom_subscription_ = this->create_subscription<nav_msgs::msg::Odometry>(
-                //     odom_topic_name, 10, std::bind(&MocapFakeLocalizer::odom_callback, this, std::placeholders::_1));
-                
-
                 break;
             case 4:
                 RCLCPP_INFO(this->get_logger(), "Mode 4: Use the Mocap data for the odometry and localization (For the Ground Truth based navigation).");
+                this->ref2map_tf_broadcast(); // set the static transform from the reference frame to the map frame based on the provided parameters
+                // this->setTransMatRef2Odom(); // set the homogeneous transformation matrix from the reference frame to the odom frame based on the current ground truth pose
+
+                gt_odom_subscription_ = this->create_subscription<nav_msgs::msg::Odometry>(
+                    gt_topic_name, 10, std::bind(&MocapFakeLocalizer::groundtruth_odom_mode4_callback, this, std::placeholders::_1));
 
                 break;
         }
@@ -164,6 +163,83 @@ public:
     }
 
 private:
+    void groundtruth_odom_mode4_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+        if(!transMat_ref2odom_set_){
+            RCLCPP_WARN(this->get_logger(), "Reference to odom transform not set yet. Ignoring ground truth odometry data.");
+            this->setTransMatRef2Odom();
+            return;
+        }
+
+        if(!transMat_map2odom_set_) {
+            RCLCPP_WARN(this->get_logger(), "Map to odom transform not set yet. Cannot publish odom to base_link transform.");
+            this->map2odom_static_tf_broadcast();
+            return;
+        }
+
+        // publish odom->base_link transform based on the ground truth pose and the reference to odom transform
+        Eigen::Matrix4d T_ref_to_gt = transformToMatrix(msg->pose.pose.position,  msg->pose.pose.orientation);
+        Eigen::Matrix4d T_odom_to_baselink = T_ref_to_odom_.inverse() * T_ref_to_gt;
+        geometry_msgs::msg::Point final_translation;
+        geometry_msgs::msg::Quaternion final_rotation;
+        matrixToTransform(T_odom_to_baselink, final_translation, final_rotation);
+
+        geometry_msgs::msg::TransformStamped odom_to_baselink_tf;
+
+        odom_to_baselink_tf.header.stamp = this->get_clock()->now();
+        odom_to_baselink_tf.header.frame_id = odom_frame_;
+        odom_to_baselink_tf.child_frame_id = base_link_frame_;
+
+        odom_to_baselink_tf.transform.translation.x = final_translation.x;
+        odom_to_baselink_tf.transform.translation.y = final_translation.y;
+        odom_to_baselink_tf.transform.translation.z = final_translation.z;
+        
+        odom_to_baselink_tf.transform.rotation.w = final_rotation.w;
+        odom_to_baselink_tf.transform.rotation.x = final_rotation.x;
+        odom_to_baselink_tf.transform.rotation.y = final_rotation.y;
+        odom_to_baselink_tf.transform.rotation.z = final_rotation.z;
+
+        tf_broadcaster_->sendTransform(odom_to_baselink_tf);
+    }
+
+    void map2odom_static_tf_broadcast(){
+        if(!transMat_ref2odom_set_){
+            RCLCPP_WARN(this->get_logger(), "Reference to odom transform not set yet. Cannot broadcast map to odom static transform.");
+            return;
+        }
+
+        geometry_msgs::msg::TransformStamped ref_to_map_tf;
+        T_ref_to_map_ = Eigen::Matrix4d::Identity();
+        try{
+            ref_to_map_tf = tf_buffer_->lookupTransform(
+                ref_frame_, map_frame_, tf2::TimePointZero, tf2::Duration(std::chrono::seconds(5)));
+            T_ref_to_map_ = transformToMatrix(ref_to_map_tf.transform.translation, ref_to_map_tf.transform.rotation);
+            transMat_map2odom_set_ = true;
+            
+            Eigen::Matrix4d T_map_to_odom = T_ref_to_map_.inverse() * T_ref_to_odom_;
+            geometry_msgs::msg::Point final_translation;
+            geometry_msgs::msg::Quaternion final_rotation;
+            matrixToTransform(T_map_to_odom, final_translation, final_rotation);
+            geometry_msgs::msg::TransformStamped map_to_odom_tf;
+            map_to_odom_tf.header.stamp = this->now();
+            map_to_odom_tf.header.frame_id = map_frame_;
+            map_to_odom_tf.child_frame_id = odom_frame_;
+            map_to_odom_tf.transform.translation.x = final_translation.x;
+            map_to_odom_tf.transform.translation.y = final_translation.y;
+            map_to_odom_tf.transform.translation.z = final_translation.z;
+            map_to_odom_tf.transform.rotation.w = final_rotation.w;
+            map_to_odom_tf.transform.rotation.x = final_rotation.x;
+            map_to_odom_tf.transform.rotation.y = final_rotation.y;
+            map_to_odom_tf.transform.rotation.z = final_rotation.z;
+            tf_static_broadcaster_->sendTransform(map_to_odom_tf);
+            
+            RCLCPP_INFO(this->get_logger(), "Static transform %s -> %s broadcasted based on current ground truth pose.", map_frame_.c_str(), odom_frame_.c_str());
+        }catch (tf2::TransformException &ex) {
+            RCLCPP_WARN(this->get_logger(), "Could not get transform from base_mocap to map: %s", ex.what());
+        }
+    }
+
+
+
     void setTransMatRef2Odom() {
         // set the homogeneous transformation matrix from the reference frame to the odom frame
         // The current ground truth 'base_footprint' frame pose relative to the 'base_mocap' frame will be the odom frame on the ref frame. 
@@ -172,7 +248,7 @@ private:
         try {
             ref_to_footprint_tf = tf_buffer_->lookupTransform(
                 ref_frame_, gt_child_frame_, tf2::TimePointZero, tf2::Duration(std::chrono::seconds(5)));
-                T_ref_to_odom_ = transformToMatrix(ref_to_footprint_tf.transform.translation, ref_to_footprint_tf.transform.rotation);
+            T_ref_to_odom_ = transformToMatrix(ref_to_footprint_tf.transform.translation, ref_to_footprint_tf.transform.rotation);
             transMat_ref2odom_set_ = true;
                 
         } catch (tf2::TransformException &ex) {
@@ -240,7 +316,8 @@ private:
         }
     }
 
-    void ref2map_tf_broadcast() {
+    // broadcast the static transform from the reference frame to the map frame based on the provided parameters
+    void ref2map_tf_broadcast() {        
         geometry_msgs::msg::TransformStamped t;
 
         t.header.stamp = this->get_clock()->now();
@@ -257,7 +334,7 @@ private:
         
         tf_static_broadcaster_->sendTransform(t);
         
-        RCLCPP_INFO(this->get_logger(), "Static transform %s -> map broadcasted.", ref_frame_.c_str());
+        RCLCPP_INFO(this->get_logger(), "Static transform %s -> %s broadcasted.", ref_frame_.c_str(), map_frame_.c_str());
     }
 
     void groundtruth_odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
@@ -428,6 +505,7 @@ private:
 
     bool initialized_ = false;
     bool transMat_ref2odom_set_ = false;
+    bool transMat_map2odom_set_ = false;
     std::string ref_frame_;
     // std::string child_frame_;
     std::string gt_child_frame_;
@@ -451,6 +529,7 @@ private:
     Eigen::Matrix4d T_mocap_to_map_; 
     Eigen::Matrix4d T_odom_to_baselink_; 
     Eigen::Matrix4d T_ref_to_odom_; 
+    Eigen::Matrix4d T_ref_to_map_;
 };
 
 int main(int argc, char * argv[]) {
