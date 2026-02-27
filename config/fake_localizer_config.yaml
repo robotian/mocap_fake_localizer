@@ -19,4 +19,5 @@
     base_link_frame: "base_link"  # The frame of the mocap odometry (e.g., "ground_truth")
     
     map_pose_wrt_ref: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]  # Pose of the map frame with respect to the reference frame (x, y, z, x, y, z, w)
+    # map_pose_wrt_ref: [-0.463, 1.044, 0.158, -0.0014149644412100315, 0.003686182200908661, 0.9419442415237427, 0.33574607968330383]  # Pose of the map frame with respect to the reference frame (x, y, z, x, y, z, w)
       

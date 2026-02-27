@@ -318,7 +318,6 @@ private:
             ref_to_map_tf.transform.rotation.z = map_rotation.z;
 
             tf_broadcaster_->sendTransform(ref_to_map_tf);
-            RCLCPP_INFO(this->get_logger(), "Static transform %s -> %s broadcasted.", ref_frame_.c_str(), map_frame_.c_str());
         } catch (tf2::TransformException &ex) {
             RCLCPP_WARN(this->get_logger(), "Could not get transform from map to odom: %s", ex.what());
         }
