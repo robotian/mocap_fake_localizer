@@ -118,6 +118,7 @@ public:
         gt_topic_name_ = this->get_parameter("mocap_odom_topic").as_string();
         std::string odom_topic_name = this->get_parameter("odom_topic").as_string();
         
+        
         // Timer to check for TF and publish at 10Hz
         timer_ = this->create_wall_timer(1000ms, std::bind(&MocapFakeLocalizer::on_timer, this));
 
@@ -162,6 +163,12 @@ public:
 private:
 
     void on_timer() {
+        if(mode_ == 1 || mode_ == 3) {
+            // In mode 1, we just need to publish the static transform from the reference frame to the map frame, which is already done in the constructor. We can cancel the timer now.
+            timer_->cancel();
+            return;
+        }
+        
         size_t gt_odom_pub_count = this->count_publishers(gt_topic_name_); // gt_odom_subscription_ ? gt_odom_subscription_->get_publisher_count() : 0;
         if(gt_odom_pub_count == 0) {
             RCLCPP_WARN(this->get_logger(), "No publishers for ground truth odometry topic. Please check if the Mocap system is publishing to the correct topic.");
