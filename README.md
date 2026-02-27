@@ -44,6 +44,26 @@ colcon build --packages-select mocap_fake_localizer
 ros2 run mocap_fake_localizer mocap_fake_localizer_node
 ```
 
+This node supports four different operational modes selected via the `mode` parameter. Set the mode in a YAML config or on the command line (e.g. `--ros-args -p mode:=2`). The modes determine whether mocap data or the local EKF/odometry estimator are used for odometry and/or localization:
+
+1. **Mode 1 – Local EKF + Localizer**
+   - The node uses the robot's own odometry estimator (EKF or other) for the `odom` frame.
+   - Mocap data is treated as a separate localizer; the static transform is published from the defined reference frame to `map` using the first mocap message.
+   - Useful when mocap is only needed to correct drift via a mapping/localization node.
+
+2. **Mode 2 – Mocap for Odometry + Localizer**
+   - Mocap odometry replaces the onboard odometry (`odom` topic) while a separate localizer (e.g. SLAM) still computes the `map` frame.
+   - The `map` frame transform is initialized from localizer outputs but `odom` is driven by mocap.
+
+3. **Mode 3 – Local EKF + Mocap for Localization** (default mode in example config)
+   - The robot's EKF/odometry estimator publishes `odom`, but the map origin is set directly from mocap data.
+   - Static `map -> odom` transform is derived from the first mocap message; onboard odometry continues normally.
+   - This is ideal when you want the map frame to follow mocap ground truth but still rely on your own odometry for short-term motion.
+
+4. **Mode 4 – Mocap for Both Odometry and Localization**
+   - Mocap data is used for both the `odom` and `map` frames; the node effectively passes through ground-truth pose.
+   - Suitable for ground-truth based navigation or evaluation of algorithms without any onboard estimation.
+
 **Parameters:**
 - `mocap_odom_topic` (string, default: `ground_truth/odom`) - Input odometry topic from mocap system
 
