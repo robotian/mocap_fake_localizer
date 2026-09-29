@@ -143,7 +143,9 @@ public:
             case 3:
                 RCLCPP_INFO(this->get_logger(), "Mode 3: Use the local EKF (or odometry estimator), and use the Mocap data as a localizer.");
                 this->ref2map_tf_broadcast();
-                this->map2odom_tf_broadcast(true);
+                // this->map2odom_tf_broadcast(true);
+                odom_subscription_ = this->create_subscription<nav_msgs::msg::Odometry>(
+                    odom_topic_name, 10, std::bind(&MocapFakeLocalizer::odom_callback, this, std::placeholders::_1));
                 break;
             case 4:
                 RCLCPP_INFO(this->get_logger(), "Mode 4: Use the Mocap data for the odometry and localization (For the Ground Truth based navigation).");
@@ -155,8 +157,7 @@ public:
                 break;
         }
 
-        // odom_subscription_ = this->create_subscription<nav_msgs::msg::Odometry>(
-        //     odom_topic_name, 10, std::bind(&MocapFakeLocalizer::odom_callback, this, std::placeholders::_1));
+        
 
     }
 
@@ -274,14 +275,15 @@ private:
     }
 
     void map2odom_tf_broadcast(bool publist_tf = true) {
-        geometry_msgs::msg::TransformStamped ref_to_footprint_tf;
-        geometry_msgs::msg::TransformStamped ref_to_map_tf;
-        geometry_msgs::msg::TransformStamped odom_to_baselink_tf;
+        geometry_msgs::msg::TransformStamped ref_to_footprint_tf;  // The current ground truth 'base_footprint' frame pose relative to the 'base_mocap' frame will be the odom frame on the ref frame.
+        geometry_msgs::msg::TransformStamped ref_to_map_tf;         // The static transform from the reference frame to the map frame based on the provided parameters
+        geometry_msgs::msg::TransformStamped odom_to_baselink_tf;   //  The odom-to-baselink transform from the robot EKF or odometry estimator (e.g., from wheel encoders, IMU, etc.)
 
         Eigen::Matrix4d T_ref2gt_tf;
         Eigen::Matrix4d T_ref2map_tf;
         Eigen::Matrix4d T_odom_to_baselink_tf;
 
+        // get the latest transforms from TF, base_mocap to base_footprint, base_mocap to map, and odom to base_link
         try {
             ref_to_footprint_tf = tf_buffer_->lookupTransform(
                 ref_frame_, gt_child_frame_, tf2::TimePointZero, tf2::Duration(std::chrono::seconds(5)));
@@ -328,8 +330,10 @@ private:
         map_to_odom_tf.transform.rotation.z = final_rotation.z;
 
         if(publist_tf) {
-            tf_static_broadcaster_->sendTransform(map_to_odom_tf);        
-            RCLCPP_INFO(this->get_logger(), "Static transform %s -> %s broadcasted.", map_frame_.c_str(), odom_frame_.c_str());
+            // tf_static_broadcaster_->sendTransform(map_to_odom_tf);        
+            // RCLCPP_INFO(this->get_logger(), "Static transform %s -> %s broadcasted.", map_frame_.c_str(), odom_frame_.c_str());
+            tf_broadcaster_->sendTransform(map_to_odom_tf);
+            RCLCPP_INFO(this->get_logger(), "Transform %s -> %s broadcasted based on current ground truth pose.", map_frame_.c_str(), odom_frame_.c_str());
         }
     }
 
@@ -351,6 +355,7 @@ private:
 
         T_ref_to_map_static_ = transformToMatrix(t.transform.translation, t.transform.rotation);
         transMat_ref2map_static_set_ = true;
+        initialized_ = true;
 
         tf_static_broadcaster_->sendTransform(t);
         
@@ -474,22 +479,22 @@ private:
         // Get transform from 'map' frame to 'odom' frame
         try {
             geometry_msgs::msg::TransformStamped mocap_to_footprint_tf = tf_buffer_->lookupTransform(
-                "base_mocap", "base_footprint", tf2::TimePointZero);
+                ref_frame_, gt_child_frame_, tf2::TimePointZero);
 
             T_mocap_to_footprint_ = transformToMatrix(mocap_to_footprint_tf.transform.translation, mocap_to_footprint_tf.transform.rotation);
 
             geometry_msgs::msg::TransformStamped mocap_to_map_tf = tf_buffer_->lookupTransform(
-                "base_mocap", "map", tf2::TimePointZero);
+                ref_frame_, map_frame_, tf2::TimePointZero);
 
             T_mocap_to_map_ = transformToMatrix(mocap_to_map_tf.transform.translation, mocap_to_map_tf.transform.rotation);
 
             geometry_msgs::msg::TransformStamped odom_to_baselink_tf = tf_buffer_->lookupTransform(
-                "odom", "base_link", tf2::TimePointZero);
+                odom_frame_, base_link_frame_, tf2::TimePointZero);
 
             T_odom_to_baselink_ = transformToMatrix(odom_to_baselink_tf.transform.translation, odom_to_baselink_tf.transform.rotation);
             
 
-            Eigen::Matrix4d T_map_to_odom = T_mocap_to_map_.inverse() * T_mocap_to_footprint_ * T_odom_to_baselink_;
+            Eigen::Matrix4d T_map_to_odom = T_mocap_to_map_.inverse() * T_mocap_to_footprint_ * T_odom_to_baselink_.inverse();
             geometry_msgs::msg::Point final_translation;
             geometry_msgs::msg::Quaternion final_rotation;
             matrixToTransform(T_map_to_odom, final_translation, final_rotation);
@@ -498,8 +503,8 @@ private:
             geometry_msgs::msg::TransformStamped map_to_odom_tf;
 
             map_to_odom_tf.header.stamp = this->get_clock()->now();
-            map_to_odom_tf.header.frame_id = "map";
-            map_to_odom_tf.child_frame_id = "odom";
+            map_to_odom_tf.header.frame_id = map_frame_;
+            map_to_odom_tf.child_frame_id = odom_frame_;
 
             map_to_odom_tf.transform.translation.x = final_translation.x;
             map_to_odom_tf.transform.translation.y = final_translation.y;
@@ -510,8 +515,8 @@ private:
             map_to_odom_tf.transform.rotation.y = final_rotation.y;
             map_to_odom_tf.transform.rotation.z = final_rotation.z;
             
-            tf_static_broadcaster_->sendTransform(map_to_odom_tf);
-
+            tf_broadcaster_->sendTransform(map_to_odom_tf);
+            // RCLCPP_INFO(this->get_logger(), "Transform %s -> %s broadcasted based on current ground truth pose.", map_frame_.c_str(), odom_frame_.c_str());
 
         } catch (tf2::TransformException &ex) {
             RCLCPP_WARN(this->get_logger(), "Could not get transform from base_mocap to base_footprint: %s", ex.what());
@@ -520,7 +525,7 @@ private:
 
 
         // We can add any additional logic here if needed, but for now we just log the reception of odometry data.
-        RCLCPP_INFO(this->get_logger(), "Received odometry data on %s.", msg->header.frame_id.c_str());
+        // RCLCPP_INFO(this->get_logger(), "Received odometry data on %s.", msg->header.frame_id.c_str());
     }
 
     bool initialized_ = false;
