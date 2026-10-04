@@ -65,7 +65,7 @@ install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
 )
 
-install(PROGRAMS scripts/natnet_ref_pose.py
+install(PROGRAMS scripts/natnet_ref_pose.py scripts/ref_localizer.py
   DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)

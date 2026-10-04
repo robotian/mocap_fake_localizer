@@ -213,6 +213,8 @@ class NatNetRefPose(Node):
         self.resolved = False  # a model definition has been matched against rigid_body
         self.frames = 0
         self.untracked = 0
+        self.missing = 0  # frames without the rigid body
+        self.silent = 0  # 5 s reports in a row without a frame
         self.warned = set()
 
         self.local_ip = self._local_ip()
@@ -322,6 +324,7 @@ class NatNetRefPose(Node):
         self.frames += 1
         self.last_frame = time.monotonic()
         if self.rb_id is None or self.rb_id not in bodies:
+            self.missing += 1
             # not known yet, or renamed / added in Motive: ask again, at most every 2 s
             if self.last_frame - self.last_modeldef_request > 2.0:
                 self.last_modeldef_request = self.last_frame
@@ -374,14 +377,20 @@ class NatNetRefPose(Node):
             self.tf.sendTransform(t)
 
     def _report(self):
-        if self.frames == 0:
+        self.silent = self.silent + 1 if self.frames == 0 else 0
+        if self.silent % 12 == 1:  # at once, then every minute (e.g. a robot outdoors, away from Motive)
             self.get_logger().warn(f'no frames from Motive at {self.server_ip} '
                                    f'(streaming on, reachable from {self.local_ip}?)')
         elif self.rb_id is not None and time.monotonic() - self.last_tracked > self.timeout:
-            self.get_logger().warn(f"rigid body '{self.rigid_body}' not tracked "
-                                   f"({self.untracked} untracked frames in 5 s)")
+            if self.untracked:
+                self.get_logger().warn(f"rigid body '{self.rigid_body}' not tracked "
+                                       f"({self.untracked} of {self.frames} frames in 5 s)")
+            else:
+                self.get_logger().warn(f"{self.missing} frames in 5 s without rigid body '{self.rigid_body}' "
+                                       f"(Motive's streaming of rigid bodies off, or it was removed?)")
         self.frames = 0
         self.untracked = 0
+        self.missing = 0
 
     def destroy_node(self):
         self.running = False
@@ -398,6 +407,9 @@ def main(args=None):
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
+    except Exception:
+        if rclpy.ok():
+            raise  # otherwise shut down by a signal while spinning
     finally:
         node.destroy_node()
         if rclpy.ok():

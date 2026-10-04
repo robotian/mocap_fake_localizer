@@ -49,6 +49,28 @@ Motive's setting; the output is always Z-up), `base_link_offset` (`base_link`'s 
 Untracked frames are dropped, not published. Tested against Motive 1.8 (NatNet 2.8) at 100 Hz; NatNet 3.x/4.x
 frame layouts are implemented but untested.
 
+### ref_localizer.py (map -> odom from the reference pose or GPS)
+
+The robot's only `map -> odom` publisher; the EKF keeps `odom -> base_link`. Frames:
+`ref_frame -> map -> odom -> base_link`, plus `ref_frame -> base_link_ref` from the reference source.
+
+- `anchor` places `map` in `ref_frame`: `fixed` (`map_pose_in_ref`, or `anchor_file` when set), `start` (the
+  robot's first reference pose, flattened to the ground), `external` (measured once from another localizer's
+  `map -> base_link`, e.g. SLAM, and the reference pose at the same instant).
+- `source` drives `map -> odom`: `ref` (`ref_pose`), `gps` (`odometry/global` from the GPS EKF, whose own TF must be
+  off), `auto` (ref while it is fresh and `map` is anchored, else GPS), `external` (publish nothing: SLAM / AMCL do).
+- When the active source goes stale, the last `map -> odom` is held (the robot dead-reckons on its EKF).
+- `source`, `anchor` and `map_pose_in_ref` can be changed at runtime (`ros2 param set`).
+- `~/status` (`std_msgs/String`, JSON, 1 Hz), `~/save_anchor` and `~/reset_anchor` (`std_srvs/Trigger`).
+
+SLAM workflow: build the map with `source:=external anchor:=external` (the reference pose is then ground truth in
+the SLAM map), call `~/save_anchor`, save the map; later runs on that map use `source:=ref anchor:=fixed` with
+`anchor_file` set to the saved file.
+
+`mtu32_bringup`'s `bringup_main.launch.py` starts both nodes with `config/ref_localization.yaml` (+
+`config/ref_localization/<namespace>.yaml`); the old `mocap_fake_localizer_node` / `mocap_fake_ekf_node` are kept
+for older launch files.
+
 ## Dependencies
 
 - `rclcpp` - ROS2 C++ client library
