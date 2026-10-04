@@ -23,6 +23,32 @@ This package contains two nodes that facilitate integration of motion capture da
 - Broadcasts dynamic `odom → base_link` transforms
 - Configurable frame names for flexibility with different robot setups
 
+### natnet_ref_pose.py (OptiTrack Motive client)
+
+Runs on the robot and reads Motive's NatNet stream directly, so poses are stamped with the robot's own clock on
+arrival (no clock sync with Motive's PC). Publishes the robot's reference pose:
+
+- `ref_pose` (`nav_msgs/Odometry`): `base_link`'s pose in `ref_frame` (Motive's world frame, Z-up), child `base_link_ref`
+- TF `ref_frame -> base_link_ref` (remap `/tf` to the robot's `tf`, as the other nodes here do)
+
+The simulator publishes the same topic and TF from Isaac Sim's world frame (`SIM_REF_POSE`), so everything downstream
+works the same in simulation.
+
+```bash
+ros2 run mocap_fake_localizer natnet_ref_pose.py --ros-args -r __ns:=/j100_0921 -r /tf:=tf -p server_ip:=192.168.50.80
+```
+
+Parameters: `server_ip` (192.168.50.80), `command_port` (1510), `data_port` (1511), `multicast_group`
+(239.255.42.99; the client also registers for unicast, so either Motive transmission type works, unicast is the
+better choice over WiFi; empty = unicast only), `rigid_body` (empty = the node's namespace, so naming the rigid
+body after the robot needs no configuration), `ref_frame`, `child_frame`, `publish_tf`, `up_axis` (`z` or `y`,
+Motive's setting; the output is always Z-up), `base_link_offset` (`base_link`'s pose in the rigid body's frame,
+`[x, y, z, qx, qy, qz, qw]`: Motive puts the pivot at the markers' centroid), `max_rate` (Hz, 0 = every frame),
+`position_std`/`orientation_std` (covariance), `timeout` (s without frames before it reconnects).
+
+Untracked frames are dropped, not published. Tested against Motive 1.8 (NatNet 2.8) at 100 Hz; NatNet 3.x/4.x
+frame layouts are implemented but untested.
+
 ## Dependencies
 
 - `rclcpp` - ROS2 C++ client library
