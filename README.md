@@ -46,8 +46,33 @@ Motive's setting; the output is always Z-up), `base_link_offset` (`base_link`'s 
 `[x, y, z, qx, qy, qz, qw]`: Motive puts the pivot at the markers' centroid), `max_rate` (Hz, 0 = every frame),
 `position_std`/`orientation_std` (covariance), `timeout` (s without frames before it reconnects).
 
-Untracked frames are dropped, not published; a frame received twice (on both sockets, or unicast and multicast) is used once. The NatNet protocol is in `scripts/natnet.py` (standard library only, also used by multirobot_sim's web UI). Tested against Motive 1.8 (NatNet 2.8) at 100 Hz; NatNet 3.x/4.x
+`base_link_offset` and `rigid_body` can be changed at runtime. Untracked frames are dropped, not published; a frame received twice (on both sockets, or unicast and multicast) is used once. The NatNet protocol is in `scripts/natnet.py` (standard library only, also used by multirobot_sim's web UI). Tested against Motive 1.8 (NatNet 2.8) at 100 Hz; NatNet 3.x/4.x
 frame layouts are implemented but untested.
+
+### calibrate_ref_offset.py (natnet_ref_pose's base_link_offset)
+
+Motive puts a rigid body's pivot at its markers' centroid, oriented as it was when created, so `ref_pose` is
+`base_link` only with the right `base_link_offset`. This drives the robot (only with `--yes`; it needs ~0.6 m clear
+ahead and behind and room to turn) and corrects the offset the running client uses:
+
+1. tilt: standing on a flat floor, `base_link`'s roll and pitch must be zero;
+2. heading: forward and back, the direction of travel is `base_link`'s +x;
+3. position: one turn in place, the centre of the circle `ref_pose` draws is the rotation centre, taken as
+   `base_link` (a differential drive turns about its axle midpoint; a skid-steer robot roughly about its centre).
+
+z is kept unless `--base-height` (`base_link`'s height above Motive's floor) is given: the localizer flattens the
+pose, so x, y and yaw are what navigation uses.
+
+```bash
+ros2 run mocap_fake_localizer calibrate_ref_offset.py --yes --apply --write <file> --ros-args -r __ns:=/j100_0921
+```
+
+`--apply` sets it on the running `natnet_ref_pose` (`base_link_offset` and `rigid_body` can change at runtime),
+`--write` stores it in a params file (e.g. `mtu32_bringup/config/ref_localization/<namespace>.yaml`, keeping the
+file's other parameters). Run it again to check: a correct offset gives a circle radius under ~1 cm and
+corrections near zero. Tested with `test/fake_motive.py` (a fake Motive whose robot follows `cmd_vel`, with the
+markers mounted at a known pose): 30 deg yaw, 21 deg pitch and a 20/10/45 cm offset recovered within 0.1 mm /
+0.03 deg, the second run 1 mm / 0.02 deg.
 
 ### ref_localizer.py (map -> odom from the reference pose or GPS)
 
@@ -70,6 +95,12 @@ the SLAM map), call `~/save_anchor`, save the map; later runs on that map use `s
 `mtu32_bringup`'s `bringup_main.launch.py` starts both nodes with `config/ref_localization.yaml` (+
 `config/ref_localization/<namespace>.yaml`); the old `mocap_fake_localizer_node` / `mocap_fake_ekf_node` are kept
 for older launch files.
+
+### test/fake_motive.py
+
+A fake Motive (NatNet 2.8 like Motive 1.8, unicast on 127.0.0.1:1510, 100 Hz) carrying one rigid body on a fake
+robot that follows `<namespace>/cmd_vel`, plus an untracked one: for testing the client, the calibration and
+multirobot_sim's web UI without Motive or a robot. Not installed; see its docstring.
 
 ## Dependencies
 

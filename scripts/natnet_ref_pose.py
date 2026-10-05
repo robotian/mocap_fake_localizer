@@ -24,6 +24,7 @@ import time
 import rclpy
 from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
+from rcl_interfaces.msg import SetParametersResult
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from tf2_ros import TransformBroadcaster
@@ -96,6 +97,7 @@ class NatNetRefPose(Node):
         if not self.rigid_body:
             raise ValueError('no rigid_body parameter and no namespace to default it to')
 
+        self.add_on_set_parameters_callback(self._on_params)
         self.pub = self.create_publisher(Odometry, 'ref_pose', 10)
         self.tf = TransformBroadcaster(self) if self.publish_tf else None
 
@@ -135,6 +137,23 @@ class NatNetRefPose(Node):
         self.thread = threading.Thread(target=self._receive_loop, daemon=True)
         self.thread.start()
         self.create_timer(5.0, self._report)
+
+    def _on_params(self, params):
+        """base_link_offset and rigid_body can change at runtime (calibrate_ref_offset.py --apply, the web UI)."""
+        for prm in params:
+            if prm.name == 'base_link_offset':
+                v = list(prm.value)
+                if len(v) != 7:
+                    return SetParametersResult(successful=False, reason='needs [x, y, z, qx, qy, qz, qw]')
+                self.offset_t, self.offset_q = tuple(v[:3]), q_normalize(tuple(v[3:7]))
+                self.get_logger().info(f'base_link_offset {v}')
+            elif prm.name == 'rigid_body':
+                self.rigid_body = prm.value or self.get_namespace().strip('/')
+                self.resolved = False  # matched again on the next model definition
+                self.rb_id = None
+                self._send(NAT_REQUEST_MODELDEF)
+                self.get_logger().info(f"rigid body '{self.rigid_body}'")
+        return SetParametersResult(successful=True)
 
     def _local_ip(self):
         """This machine's address on the route to Motive (no packet is sent)."""
