@@ -46,7 +46,7 @@ Motive's setting; the output is always Z-up), `base_link_offset` (`base_link`'s 
 `[x, y, z, qx, qy, qz, qw]`: Motive puts the pivot at the markers' centroid), `max_rate` (Hz, 0 = every frame),
 `position_std`/`orientation_std` (covariance), `timeout` (s without frames before it reconnects).
 
-Untracked frames are dropped, not published. Tested against Motive 1.8 (NatNet 2.8) at 100 Hz; NatNet 3.x/4.x
+Untracked frames are dropped, not published; a frame received twice (on both sockets, or unicast and multicast) is used once. The NatNet protocol is in `scripts/natnet.py` (standard library only, also used by multirobot_sim's web UI). Tested against Motive 1.8 (NatNet 2.8) at 100 Hz; NatNet 3.x/4.x
 frame layouts are implemented but untested.
 
 ### ref_localizer.py (map -> odom from the reference pose or GPS)

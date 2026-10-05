@@ -67,6 +67,8 @@ install(DIRECTORY config launch
 
 install(PROGRAMS scripts/natnet_ref_pose.py scripts/ref_localizer.py
   DESTINATION lib/${PROJECT_NAME})
+install(FILES scripts/natnet.py
+  DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
